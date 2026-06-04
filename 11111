@@ -1,0 +1,136 @@
+(function(){
+    'use strict';
+
+    const originalMathRandom = Math.random;
+    const originalCrypto = window.crypto?.getRandomValues?.bind(window.crypto);
+
+    let targetFloat = null;
+    let targetInt = null;
+
+    function rand(min = 0, max = 1){
+        return originalMathRandom() * (max - min) + min;
+    }
+
+    function randomNormal(){
+        let u = 0, v = 0;
+        while(u === 0) u = Math.random();
+        while(v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    function clamp(x, a, b){
+        return Math.min(Math.max(x, a), b);
+    }
+
+    function setTarget(index, total, labels){
+
+        if(index < 0 || index >= total) return;
+
+        const a = index / total;
+        const b = (index + 1) / total;
+        const size = b - a;
+
+        const center = a + size / 2;
+
+        const minSafe = a + size * 0.10;
+        const maxSafe = b - size * 0.10;
+
+        const mode = Math.floor(Math.random() * 4);
+
+        let rawTarget;
+
+        switch(mode){
+
+            case 0:
+                rawTarget = rand(minSafe, maxSafe);
+                break;
+
+            case 1:
+                rawTarget = center + randomNormal() * (size * 0.20);
+                break;
+
+            case 2:
+                rawTarget = Math.random() < 0.5
+                    ? rand(minSafe, center)
+                    : rand(center, maxSafe);
+                break;
+
+            case 3:
+                rawTarget = center + (Math.random() < 0.5 ? -1 : 1) * rand(size * 0.05, size * 0.35);
+                break;
+        }
+
+        targetFloat = clamp(rawTarget, minSafe, maxSafe);
+        targetInt = Math.floor(targetFloat * 2**32);
+
+        const positionPercent = ((targetFloat - a) / size * 100).toFixed(2);
+
+        console.log(
+            `[RNG Override] Slice ${index + 1}: "${labels[index]}" | ${positionPercent}% (SAFE ZONE)`
+        );
+    }
+
+    function init(){
+
+        const labels = [...document.querySelectorAll('.basic-editor div')]
+            .map(x => x.innerText.trim())
+            .filter(Boolean);
+
+        if(!labels.length){
+            setTimeout(init, 500);
+            return;
+        }
+
+        const n = labels.length;
+
+        function override(index){
+
+            // ✅ FIX: reset previous forced state so same index recalculates properly
+            targetFloat = null;
+            targetInt = null;
+
+            setTarget(index, n, labels);
+        }
+
+        Math.random = function(){
+            return targetFloat !== null ? targetFloat : originalMathRandom();
+        };
+
+        if(window.crypto && originalCrypto){
+            window.crypto.getRandomValues = function(arr){
+
+                if(targetInt !== null){
+                    if(arr instanceof Uint32Array){
+                        arr.fill(targetInt);
+                    } else {
+                        const bytes = [
+                            targetInt & 0xff,
+                            (targetInt >>> 8) & 0xff,
+                            (targetInt >>> 16) & 0xff,
+                            (targetInt >>> 24) & 0xff
+                        ];
+                        for(let i = 0; i < arr.length; i++){
+                            arr[i] = bytes[i % 4];
+                        }
+                    }
+                    return arr;
+                }
+
+                return originalCrypto(arr);
+            };
+        }
+
+        console.log(`Wheel loaded with ${n} entries.`);
+
+        window.forceSpin = (i) => override(i - 1);
+
+        document.addEventListener('keydown', e => {
+            const k = parseInt(e.key, 10);
+            if(!isNaN(k) && k >= 1 && k <= Math.min(n, 9)){
+                override(k - 1);
+            }
+        });
+    }
+
+    window.addEventListener('load', init);
+})();
